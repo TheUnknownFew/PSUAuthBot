@@ -14,6 +14,7 @@ class Verify(commands.Cog):
     @commands.command()
     @commands.check(is_command_channel)
     async def verify(self, ctx: commands.Context, first_name: str, last_name: str, email: str):
+        print("Hello ", ctx.message.to_reference())
         if not re.match('[a-zA-Z]+[0-9]+@psu.edu', email):
             invalid_email = discord.Embed(
                 title='Invalid Pennstate Email',

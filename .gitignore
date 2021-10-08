@@ -2,3 +2,6 @@ venv
 .idea
 
 config.json
+user_data.csv
+discord.log
+credentials.json

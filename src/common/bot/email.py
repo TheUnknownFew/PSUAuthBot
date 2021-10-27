@@ -1,20 +1,13 @@
-from email.message import Message
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-import email as eml
-
 import smtplib as smtp
 import imaplib as imap
-from enum import IntEnum
+import email as eml
+from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
-from extensions.userdata import UserData
-from main import google_cfg
-
-
-class EmailStatus(IntEnum):
-    UNDELIVERED = 1
-    VALID_REPLY = 2
-    TIMEOUT = 3
+from common.bot.emailstatus import EmailStatus, timeout, undelivered, valid_reply
+from extensions.userdb import UserEntry
+from common.data.settings import google_cfg, discord_cfg as dcfg
 
 
 class Gmail:
@@ -24,7 +17,7 @@ class Gmail:
 
     def __init__(self):
         self.__smtp_conn: smtp.SMTP = self.__new_smtp_conn
-        self.__imap_conn: imap.IMAP4_SSL = self.__new_imap_conn
+        self.__imap: imap.IMAP4_SSL = self.__new_imap_conn
 
     @property
     def __new_smtp_conn(self):
@@ -63,23 +56,18 @@ class Gmail:
         message.attach(MIMEText(Gmail.content, 'plain'))
         self.__smtp.send_message(message)
 
-    def check_for_replies(self, users_pending_emails: list[UserData]) -> list[tuple[UserData, EmailStatus]]:
-        users_with_replies: list[tuple[UserData, EmailStatus]] = []
-        self.__imap_conn.noop()
-        for user in users_pending_emails:
-            _, responses = self.__imap_conn.uid('SEARCH', f'(SUBJECT "{Gmail.email_subject} - {user.psu_email}" UNSEEN)')
-            responses = responses[0].split()
-            if len(responses) == 0:
-                # if datetime.now() - user.joined > 14 days: tag as timeout
-                continue
-            _, msg_data = self.__imap_conn.uid('FETCH', responses[0], '(BODY[HEADER])')
-            msg = eml.message_from_bytes(msg_data[0][1])
-            if msg['From'] in 'postmaster@pennstateoffice365.onmicrosoft.com':
-                users_with_replies.append((user, EmailStatus.UNDELIVERED))
-                continue
-            users_with_replies.append((user, EmailStatus.VALID_REPLY))
-        return users_with_replies
+    def check_for_replies(self, user: UserEntry) -> EmailStatus:
+        self.__imap.noop()
+        _, responses = self.__imap.uid('SEARCH', f'(SUBJECT "{Gmail.email_subject} - {user.psu_email}" UNSEEN)')
+        responses = responses[0].split()
+        if len(responses) == 0 and (datetime.now() - user.joined).days > dcfg.email_response_timeout:
+            return timeout
+        _, msg_data = self.__imap.uid('FETCH', responses[0], '(BODY[HEADER])')
+        msg = eml.message_from_bytes(msg_data[0][1])
+        if msg['From'] in 'postmaster@pennstateoffice365.onmicrosoft.com':
+            return undelivered
+        return valid_reply
 
     def unload(self):
         self.__smtp_conn.quit()
-        self.__imap_conn.logout()
+        self.__imap.logout()

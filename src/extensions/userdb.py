@@ -1,20 +1,21 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from functools import wraps
 from types import AsyncGeneratorType
-from typing import Union, Callable, AsyncGenerator
+from typing import Union, AsyncGenerator
 
 import aiosqlite as sqlite
-import discord
+from discord import DMChannel, Message, User
 from discord.ext import commands
 
-from main import discord_cfg
-from util import OrderedEnum
-from util.botexceptions import UnregisteredUserError, UserMismatchError, InvalidGlobalOperation
+from common.exceptions import UnregisteredUserError, InvalidGlobalOperation, UserMismatchError
+from common.bot.userstatus import UserStatus, ComparableStatus
+from common.data.settings import discord_cfg as dcfg
 
-User = Union[discord.User, discord.Member]
-
-_columns: list[str] = ['user_id', 'first_name', 'last_name', 'psu_email', 'status_msg_id', 'dm_channel_id', 'status']
+_columns: list[str] = ['user_id', 'joined_timestamp', 'first_name', 'last_name',
+                       'psu_email', 'status_msg_id', 'dm_channel_id', 'status']
 _bot: commands.Bot
+_param_list: str = ''.join(['?' for _ in range(len(_columns))])
 
 
 def setup(bot: commands.Bot):
@@ -22,93 +23,91 @@ def setup(bot: commands.Bot):
     _bot = bot
 
 
-class Status(OrderedEnum):
-    # Order of status matters.
-    ATTEMPTED = (1, '\U000026A0 Attempted')                                         # user already tried !verify
-    PENDING_BOTH = (2, '\U00002709 \U0001F4CE Awaiting Email & Canvas Image')       # waiting for the user to respond to DMs and email
-    PENDING_DM = (3, '\U0001F4CE Awaiting Canvas Image')                            # waiting for the user to respond to DMs
-    PENDING_EMAIL = (4, '\U00002709 Awaiting Email')                                # waiting for the user to respond to email
-    AWAITING_VERIFICATION = (5, '\U0001F510 Awaiting Verification')                 # waiting admin to verify user
-    VERIFIED = (6, '\U00002714 Verified')                                           # user has been verified by admin
-    DENIED = (7, '\U0000274C Rejected')                                             # user was denied from the verification process.
-
-    def __init__(self, int_val: int, representation: str):
-        self._value_ = int_val
-        self.representation: str = representation
-
-    def __repr__(self):
-        return self.representation
-
-
 @dataclass
-class UserData:
+class UserEntry:
+    # Discord's internal user id
     user_id: int
+    # Time of when user uses !verify command
+    joined_timestamp: float
     first_name: str
     last_name: str
+    # User's Pennstate Email
     psu_email: str
+    # Discord's internal id for the status message sent to the greeters.
     status_msg_id: int
+    # Discord's internal id for the User's dm channel.
     dm_channel_id: int
-    __status: str
-    image_urls: list[str]
+    # Private member used as the string variant of Enum UserStatus.
+    # marked as a field so object creation is compatible with reading from the database.
+    __status: Union[str, UserStatus] = field()
+    # A list of email URLS submitted from the User.
+    image_urls: list[str] = field(default_factory=list)
 
-    def __init__(
-            self,
-            user_id: int,
-            first_name: str,
-            last_name: str,
-            psu_email: str,
-            status_msg_id: int,
-            dm_channel_id: int,
-            status: Union[str, Status],
-            image_urls=None
-    ):
-        if image_urls is None:
-            image_urls = []
-        self.user_id = user_id
-        self.first_name = first_name
-        self.last_name = last_name
-        self.psu_email = psu_email
-        self.status_msg_id = status_msg_id
-        self.dm_channel_id = dm_channel_id
-        self.__status = status.name if isinstance(status, Status) else status
-        self.image_urls = image_urls
+    def __post_init__(self):
+        """
+        Guarantees that __status will be a UserStatus by converting any incoming strings to a UserStatus.
+
+        :raises KeyError: a KeyError is raised if an invalid UserStatus enum was passed in as a string.
+        """
+        if isinstance(self.__status, str):
+            self.status = UserStatus[self.__status]
+
+    @property
+    def status(self) -> UserStatus:
+        """
+        :return: Returns the User's UserStatus.
+        """
+        return self.__status
+
+    @status.setter
+    def status(self, status: UserStatus):
+        """
+        Sets the User's UserStatus.
+
+        :param status: A new UserStatus.
+        """
+        self.__status = status
 
     @property
     async def user(self) -> User:
-        return await _bot.fetch_user(self.user_id)
+        """
+        :return: Returns the User's internal discord User.
+        """
+        return _bot.get_user(self.user_id) or await _bot.fetch_user(self.user_id)
 
     @property
-    async def status_message(self) -> discord.Message:
-        return await discord_cfg.admin_channel_.fetch_message(self.status_msg_id)
+    async def status_message(self) -> Message:
+        """
+        :return: Returns the User's status message as a discord internal Message.
+        """
+        return dcfg.admin_channel_.fetch_message(self.status_msg_id)
 
     @property
-    async def dm_channel(self) -> discord.DMChannel:
+    def dm_channel(self) -> DMChannel:
+        """
+        :return: Returns the User's direct message channel as a discord internal DMChannel.
+        """
         return (await self.user).dm_channel
 
     @property
-    def status(self) -> Status:
-        return Status[self.__status]
+    def joined(self) -> datetime:
+        """
+        :return: Returns the User's join time as a datetime object.
+        """
+        return datetime.fromtimestamp(self.joined_timestamp)
 
-    @status.setter
-    def status(self, new_status: Status):
-        self.__status = new_status.name
-
-    def as_db_item(self) -> tuple:
-        return (
-            self.user_id,
-            self.first_name,
-            self.last_name,
-            self.psu_email,
-            self.status_msg_id,
-            self.dm_channel_id,
-            self.__status
-        )
+    def as_tuple(self) -> tuple:
+        """
+        :return: Returns the User as a tuple object.
+        """
+        return (self.user_id, self.joined_timestamp, self.first_name, self.last_name,
+                self.psu_email, self.status_msg_id, self.dm_channel_id, self.status.name)
 
 
 def user_operation(coro):
     @wraps(coro)
     def wrapper(*args, **kwargs):
-        self: UserDataManager = args[0]
+        self: UserEntryManager = args[0]
         if not self.is_registered:
             raise UnregisteredUserError(self.contextual_user)
         if self.contextual_user is None:
@@ -141,7 +140,7 @@ def global_operation(coro):
     return wrapper
 
 
-class UserDataManager:
+class UserEntryManager:
     def __init__(self, user: User = None):
         """
         Database connection manager used for managing user data:\n
@@ -154,7 +153,7 @@ class UserDataManager:
         **User:** Specified if a discord user was passed to `__init__` \n
         A user context must be used in order to fetch data about a specific user.
 
-        :param user: A discord user or None. Some operations cannot be executed if user is None.
+        :param user: A discord User or None. Some operations cannot be executed if user is None.
         """
         self.__user: User = user
         self.__is_registered: bool = False
@@ -165,7 +164,7 @@ class UserDataManager:
 
         :return:
         """
-        self.__con = await sqlite.connect('../user_data.db')
+        self.__con = await sqlite.connect('../user_entry.db')
         await self.__con.executescript(
             """
             PRAGMA foreign_keys = ON;
@@ -199,23 +198,23 @@ class UserDataManager:
         return self.__user
 
     @global_operation
-    async def get_unverified_users(self) -> AsyncGenerator[UserData, None]:
-        not_statuses = (Status.VERIFIED.name, Status.DENIED.name)
+    async def get_unverified_users(self) -> AsyncGenerator[UserEntry, None]:
+        not_statuses = (UserStatus.VERIFIED.name, UserStatus.DENIED.name)
         async with self.__con.execute("SELECT * FROM users WHERE status!=? OR status!=?", not_statuses) as cur:
             async for vals in cur:
-                yield UserData(*vals)
+                yield UserEntry(*vals)
 
     @global_operation
-    async def register_user(self, user_data: UserData):
+    async def register_user(self, user_entry: UserEntry):
         """
 
-        :param user_data:
+        :param user_entry:
         :return:
         """
-        await self.__con.execute("INSERT OR IGNORE INTO users VALUES (?, ?, ?, ?, ?, ?, ?)", user_data.as_db_item())
+        await self.__con.execute(f"INSERT OR IGNORE INTO users VALUES ({_param_list})", user_entry.as_tuple())
         if self.__user is not None:
             self.__is_registered = True
-        await self.update_user_images(user_data.image_urls)
+        await self.update_user_images(user_entry.image_urls)
 
     @user_operation
     async def get_user_images(self) -> list[str]:
@@ -233,7 +232,7 @@ class UserDataManager:
             await self.__con.execute("INSERT OR IGNORE INTO images (user_ref_id, url) VALUES (?, ?)", (self.__user.id, url))
 
     @user_operation
-    async def get_user_data(self) -> UserData:
+    async def get_user_entry(self) -> UserEntry:
         """
 
         :return:
@@ -241,20 +240,20 @@ class UserDataManager:
         async with self.__con.execute("SELECT * FROM users WHERE user_id=?", (self.__user.id,)) as cur:
             vals = await cur.fetchone()
             urls = await self.get_user_images()
-            return UserData(*vals, urls)
+            return UserEntry(*vals, urls)
 
     @user_operation
-    async def update_user(self, user_data: UserData):
+    async def update_user(self, user_entry: UserEntry):
         """
 
-        :param user_data:
+        :param user_entry:
         :return:
         """
-        if self.__user.id != user_data.user_id:
-            raise UserMismatchError(user_data, self.__user)
+        if self.__user.id != user_entry.user_id:
+            raise UserMismatchError(user_entry, self.__user)
         await self.__con.execute(
             """
-            UPDATE users 
+            UPDATE users
             SET user_id=?,
                 first_name=?,
                 last_name=?,
@@ -263,8 +262,17 @@ class UserDataManager:
                 dm_channel_id=?,
                 status=?
             WHERE user_id=?
-            """, (*user_data.as_db_item(), user_data.user_id))
-        await self.update_user_images(user_data.image_urls)
+            """, (*user_entry.as_tuple(), user_entry.user_id))
+        await self.update_user_images(user_entry.image_urls)
+
+    @user_operation
+    async def remove_user(self):
+        """
+
+        :return:
+        """
+        await self.delete_user_images()
+        await self.__con.execute("DELETE FROM users WHERE user_id=?", (self.__user.id,))
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.__con.commit()
@@ -275,15 +283,15 @@ class UserDataManager:
         return f'UserDataManager(context={context}, user={self.__user}, user_registered={self.__is_registered})'
 
 
-async def is_user_registered_with_status(user: User, status_check: Callable[[Status], bool]) -> bool:
+async def is_user_registered_with_status(user: User, status_check: ComparableStatus) -> bool:
     """
 
     :param user:
     :param status_check:
     :return:
     """
-    async with UserDataManager(user) as _user:
+    async with UserEntryManager(user) as _user:
         if _user.is_registered:
-            user_data = await _user.get_user_data()
-            return status_check(user_data.status)
+            user_entry = await _user.get_user_entry()
+            return status_check(user_entry.status)
     return False

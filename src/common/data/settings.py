@@ -1,9 +1,9 @@
-import discord
+from discord import Guild, TextChannel, Role
 from discord.ext import commands
 from pydantic import BaseModel
 
 
-class DiscordSettings(BaseModel):
+class _DiscordSettings(BaseModel):
     auth_token: str
     operating_discord: int
     request_channel: int
@@ -13,6 +13,8 @@ class DiscordSettings(BaseModel):
     new_member_role: int
     command_prefix: str
     activity: str
+    email_response_timeout: int
+    email_refresh_rate: float
 
     @classmethod
     def finalize(cls, bot: commands.Bot):
@@ -21,31 +23,31 @@ class DiscordSettings(BaseModel):
             cls.__config__.allow_mutation = False
 
     @property
-    def operating_discord_(self) -> discord.Guild:
+    def operating_discord_(self) -> Guild:
         return self._bot.get_guild(self.operating_discord)
 
     @property
-    def request_channel_(self) -> discord.TextChannel:
+    def request_channel_(self) -> TextChannel:
         return self.operating_discord_.get_channel(self.request_channel)
 
     @property
-    def greeter_role_(self) -> discord.Role:
+    def greeter_role_(self) -> Role:
         return self.operating_discord_.get_role(self.greeter_role)
 
     @property
-    def verified_role_(self) -> discord.Role:
+    def verified_role_(self) -> Role:
         return self.operating_discord_.get_role(self.verified_role)
 
     @property
-    def new_member_role_(self) -> discord.Role:
+    def new_member_role_(self) -> Role:
         return self.operating_discord_.get_role(self.new_member_role)
 
     @property
-    def admin_channel_(self) -> discord.TextChannel:
+    def admin_channel_(self) -> TextChannel:
         return self.operating_discord_.get_channel(self.admin_channel)
 
 
-class GoogleSettings(BaseModel):
+class _GoogleSettings(BaseModel):
     email: str
     password: str
 
@@ -53,12 +55,15 @@ class GoogleSettings(BaseModel):
         allow_mutation = False
 
 
-class BotSettings(BaseModel):
-    discord: DiscordSettings
-    google: GoogleSettings
+class _BotSettings(BaseModel):
+    discord: _DiscordSettings
+    google: _GoogleSettings
 
-    def as_tuple(self) -> tuple[DiscordSettings, GoogleSettings]:
+    def as_tuple(self) -> tuple[_DiscordSettings, _GoogleSettings]:
         return self.discord, self.google
 
     class Config:
         allow_mutation = False
+
+
+discord_cfg, google_cfg = _BotSettings.parse_file('../config.json').as_tuple()

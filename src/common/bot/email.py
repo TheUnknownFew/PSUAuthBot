@@ -5,8 +5,8 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from common.bot.emailstatus import EmailStatus, timeout, undelivered, valid_reply
-from extensions.userdb import UserEntry
+from common.bot.emailstatus import EmailStatus, timeout, undelivered, valid_reply, no_response
+from extensions.user import UserEntry
 from common.data.settings import google_cfg, discord_cfg as dcfg
 
 
@@ -60,8 +60,10 @@ class Gmail:
         self.__imap.noop()
         _, responses = self.__imap.uid('SEARCH', f'(SUBJECT "{Gmail.email_subject} - {user.psu_email}" UNSEEN)')
         responses = responses[0].split()
-        if len(responses) == 0 and (datetime.now() - user.joined).days > dcfg.email_response_timeout:
-            return timeout
+        if len(responses) == 0:
+            if (datetime.now() - user.joined).days > dcfg.email_response_timeout:
+                return timeout
+            return no_response
         _, msg_data = self.__imap.uid('FETCH', responses[0], '(BODY[HEADER])')
         msg = eml.message_from_bytes(msg_data[0][1])
         if msg['From'] in 'postmaster@pennstateoffice365.onmicrosoft.com':

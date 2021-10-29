@@ -1,11 +1,12 @@
 from collections import Callable
+from typing import Optional
 
 import discord
 from discord import User, SelectOption, Interaction
 
 from common.bot import userstatus
 from common.exceptions import UserMismatchError
-from extensions.userdb import UserEntry
+from extensions.user import UserEntry
 from common.data import embeds as emb
 from common.data.settings import discord_cfg as dcfg
 
@@ -15,6 +16,7 @@ class ImageSelect(discord.ui.Select['StatusMessage']):
         super().__init__(custom_id='185s_images', placeholder='No Images Available ...', row=1, disabled=True)
         self.default_option: SelectOption = SelectOption(label='No Images Available', value='None', description='There are no images for this member at this time.')
         self.append_option(self.default_option)
+        self.selected_image: Optional[str] = None
 
     async def callback(self, interaction: Interaction):
         selection = self.values[0]
@@ -22,7 +24,8 @@ class ImageSelect(discord.ui.Select['StatusMessage']):
             if option.value == selection:
                 self.placeholder = option.label
                 break
-        await self.view.update_status_message(display_image=None if selection == 'None' else selection)
+        self.selected_image = None if selection == 'None' else selection
+        await self.view.update_status_message(display_image=self.selected_image)
 
 
 class UserStatusView(discord.ui.View):
@@ -32,6 +35,9 @@ class UserStatusView(discord.ui.View):
         self.__image_select: ImageSelect = ImageSelect()
         self.__termination_callback: Callable[[User], None] = on_termination
         self.add_item(self.__image_select)
+
+    def selected_image(self) -> str:
+        return self.__image_select.selected_image
 
     def set_selectable_images(self, images: list[str]) -> None:
         self.__image_select.options.clear()
@@ -84,7 +90,7 @@ class UserStatusView(discord.ui.View):
     async def grant_verification_access(self, _: discord.ui.Button, interaction: Interaction):
         self.__user_data.next_status(userstatus.user_verified)
         user = await dcfg.operating_discord_.fetch_member(self.__user_data.user_id)
-        dm_channel = self.__user_data.dm_channel
+        dm_channel = await self.__user_data.dm_channel
         await user.remove_roles(dcfg.new_member_role_, reason='User verified')
         await user.add_roles(dcfg.verified_role_, reason='User verified')
         await user.edit(nick=f'{self.__user_data.first_name} {self.__user_data.last_name}', reason='Ensure user`s name follows server naming rules')
@@ -94,12 +100,12 @@ class UserStatusView(discord.ui.View):
     @discord.ui.button(label='Deny', style=discord.ButtonStyle.red, custom_id='185b_deny', row=0, emoji='\U0000274C')
     async def deny_verification_access(self, _: discord.ui.Button, interaction: Interaction):
         self.__user_data.next_status(userstatus.user_denied)
-        dm_channel = self.__user_data.dm_channel
+        dm_channel = await self.__user_data.dm_channel
         await dm_channel.send(embed=emb.ACCESS_DENIED)
         await self.finalize_verification(interaction.user)
 
     @discord.ui.button(label='Request New Canvas Image', style=discord.ButtonStyle.blurple, custom_id='185b_canvas', row=0, emoji='\U000026A0')
     async def request_canvas_image(self, _: discord.ui.Button, interaction: Interaction):
         self.__user_data.next_status(userstatus.canvas_image_requested)
-        dm_channel = self.__user_data.dm_channel
+        dm_channel = await self.__user_data.dm_channel
         await dm_channel.send(embed=emb.invalid_canvas_image(interaction.user))

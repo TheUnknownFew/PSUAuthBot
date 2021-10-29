@@ -23,9 +23,9 @@ dcfg.finalize(bot)
 def start():
     logging.basicConfig(level=logging.INFO)
 
-    # bot.load_extension('extensions.userdb')
+    bot.load_extension('extensions.user')
     bot.load_extension('extensions.commands.admin')
-    # bot.load_extension('extensions.commands.verify')
+    bot.load_extension('extensions.commands.verify')
     bot.run(dcfg.auth_token)
 
 

@@ -1,6 +1,7 @@
 venv
 .idea
 test
+__pycache__/
 
 config.json
 user_data.csv

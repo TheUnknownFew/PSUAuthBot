@@ -5,7 +5,6 @@ from typing import Union
 
 from discord import User
 
-from common.bot import views
 from common.bot.userstatus import ComparableStatus, UserStatus
 from common.exceptions import UserMismatchError, UnregisteredUserError, InvalidGlobalOperation
 from extensions.user import UserEntry

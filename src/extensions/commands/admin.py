@@ -13,14 +13,6 @@ class AdminCommands(commands.Cog):
     async def instructions(self, ctx: commands.Context):
         await dcfg.request_channel_.send(embed=INSTRUCTIONS)
 
-    @commands.command(usage='!hello <a> <b>')
-    async def hello(self, ctx: commands.Context, a: str, b: int):
-        await ctx.send('hello')
-
-    @commands.command()
-    async def inspect(self, ctx: commands.Context):
-        await ctx.send(f'{self.hello.usage}')
-
 
 def setup(bot: commands.Bot):
     bot.add_cog(AdminCommands(bot))

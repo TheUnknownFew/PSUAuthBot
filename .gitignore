@@ -7,3 +7,4 @@ config.json
 user_data.csv
 discord.log
 credentials.json
+user_entry.db

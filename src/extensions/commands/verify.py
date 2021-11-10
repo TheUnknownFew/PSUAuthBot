@@ -102,7 +102,7 @@ class Verify(commands.Cog):
             raise ConfirmationEmailMismatch(ctx.author.name, email, confirm_email)
 
         async with UserEntryManager(ctx.author) as user:
-            if not user.__is_registered:
+            if not user.is_registered:
                 await ctx.send(embed=emb.NEXT_STEPS, delete_after=emb.SUCCESS_DELAY, reference=ctx.message, mention_author=True)
 
                 dm_channel: DMChannel = await ctx.message.author.create_dm()

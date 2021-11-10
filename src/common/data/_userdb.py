@@ -1,15 +1,18 @@
+from collections.abc import AsyncGenerator
 from functools import wraps
 from types import AsyncGeneratorType
-from typing import Optional, AsyncGenerator
+from typing import Optional
 
 from discord import User
 
-import aiosqlite as sqlite
-
-from common.bot.userstatus import UserStatus
-from common.data.userdetails import UserDetails
+from common.bot.userstatus import ComparableStatus, UserStatus
 from common.exceptions import UserMismatchError, UnregisteredUserError, InvalidGlobalOperation
 
+import aiosqlite as sqlite
+
+Images = list[str]
+Row = tuple[int, float, str, str, str, int, int, str]
+EntryRow = Row, Images
 
 _columns: list[str] = ['user_id', 'joined_timestamp', 'first_name', 'last_name', 'psu_email', 'status_msg_id', 'dm_channel_id', 'status']
 _param_list: str = ''.join(['?, ' for _ in range(len(_columns))]).rstrip(', ')
@@ -51,7 +54,7 @@ def global_operation(coro):
     return wrapper
 
 
-class UserEntryManager:
+class _UserEntryManager:
     def __init__(self, user: User = None):
         """
         Database connection manager used for managing user data:\n
@@ -68,15 +71,15 @@ class UserEntryManager:
         """
         self.__user: Optional[User] = user
         self.__is_registered: bool = False
-        self.__conn: sqlite.Connection
+        self.__con: sqlite.Connection
 
     async def __aenter__(self):
         """
 
         :return:
         """
-        self.__conn = await sqlite.connect('../user_entry.db')
-        await self.__conn.executescript(
+        self.__con = await sqlite.connect('../user_entry.db')
+        await self.__con.executescript(
             """
             PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS users (
@@ -96,7 +99,7 @@ class UserEntryManager:
             );
             """)
         if self.__user is not None:
-            async with self.__conn.execute("SELECT EXISTS(SELECT 1 FROM users WHERE user_id=?)", (self.__user.id,)) as cur:
+            async with self.__con.execute("SELECT EXISTS(SELECT 1 FROM users WHERE user_id=?)", (self.__user.id,)) as cur:
                 row_exists, = await cur.fetchone()
                 self.__is_registered = bool(row_exists)
         return self
@@ -110,20 +113,20 @@ class UserEntryManager:
         return self.__user
 
     @global_operation
-    async def get_unverified_users(self) -> AsyncGenerator[UserDetails, None]:
+    async def get_unverified_users(self) -> AsyncGenerator[RawUserEntry, None]:
         not_statuses = (UserStatus.VERIFIED.name, UserStatus.DENIED.name)
-        async with self.__conn.execute("SELECT * FROM users WHERE status!=? OR status!=?", not_statuses) as cur:
+        async with self.__con.execute("SELECT * FROM users WHERE status!=? OR status!=?", not_statuses) as cur:
             async for vals in cur:
-                yield UserDetails(*vals)
+                yield RawUserEntry.from_row(vals)
 
     @global_operation
-    async def register(self, user_entry: UserDetails):
+    async def register(self, user_entry: RawUserEntry):
         """
         Adds a UserEntry to the database.
 
         :param user_entry: The UserEntry to add to the database.
         """
-        await self.__conn.execute(f"INSERT OR IGNORE INTO users VALUES ({_param_list})", user_entry.to_row())
+        await self.__con.execute(f"INSERT OR IGNORE INTO users VALUES ({_param_list})", user_entry.to_row())
         if self.__user is not None:
             self.__is_registered = True
         await self.update_images(user_entry.image_urls)
@@ -135,7 +138,7 @@ class UserEntryManager:
 
         :return: A list of image urls.
         """
-        async with self.__conn.execute("SELECT url FROM images WHERE user_ref_id=?", (self.__user.id,)) as cur:
+        async with self.__con.execute("SELECT url FROM images WHERE user_ref_id=?", (self.__user.id,)) as cur:
             return [url async for url, in cur]
 
     @user_operation
@@ -143,7 +146,7 @@ class UserEntryManager:
         """
         Deletes all images associated with the context User.
         """
-        await self.__conn.execute("DELETE FROM images WHERE user_ref_id=?", (self.__user.id,))
+        await self.__con.execute("DELETE FROM images WHERE user_ref_id=?", (self.__user.id,))
 
     @user_operation
     async def update_images(self, image_url_list: list[str]):
@@ -154,21 +157,21 @@ class UserEntryManager:
         """
         await self.delete_images()
         for url in image_url_list:
-            await self.__conn.execute("INSERT OR IGNORE INTO images (user_ref_id, url) VALUES (?, ?)", (self.__user.id, url))
+            await self.__con.execute("INSERT OR IGNORE INTO images (user_ref_id, url) VALUES (?, ?)", (self.__user.id, url))
 
     @user_operation
-    async def get_entry(self) -> UserDetails:
+    async def get_entry(self) -> RawUserEntry:
         """
         Fetches a the context User's UserEntry from the database.
 
         :return: Returns a UserEntry with the data of the context User.
         """
-        async with self.__conn.execute("SELECT * FROM users WHERE user_id=?", (self.__user.id,)) as cur:
+        async with self.__con.execute("SELECT * FROM users WHERE user_id=?", (self.__user.id,)) as cur:
             vals, urls = await cur.fetchone(), await self.get_images()
-            return UserDetails(*vals, urls)
+            return RawUserEntry.from_row(vals, urls)
 
     @user_operation
-    async def update_entry(self, user_entry: UserDetails):
+    async def update_entry(self, user_entry: RawUserEntry):
         """
         Updates the context User's data with a new UserEntry.
 
@@ -178,7 +181,7 @@ class UserEntryManager:
         """
         if self.__user.id != user_entry.user_id:
             raise UserMismatchError(user_entry, self.__user)
-        await self.__conn.execute(
+        await self.__con.execute(
             """
             UPDATE users
             SET user_id=?,
@@ -194,16 +197,16 @@ class UserEntryManager:
         await self.update_images(user_entry.image_urls)
 
     @user_operation
-    async def unregister(self):
+    async def remove_entry(self):
         """
         Removes the context User from the database.
         """
         await self.delete_images()
-        await self.__conn.execute("DELETE FROM users WHERE user_id=?", (self.__user.id,))
+        await self.__con.execute("DELETE FROM users WHERE user_id=?", (self.__user.id,))
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.__conn.commit()
-        await self.__conn.close()
+        await self.__con.commit()
+        await self.__con.close()
 
     def __repr__(self) -> str:
         context = 'Global' if self.__user is None else 'User'
@@ -215,15 +218,15 @@ async def is_registered(user: User):
         return _user.is_registered
 
 
-# async def is_user_registered_with_status(user: User, status_check: ComparableStatus) -> bool:
-#     """
-#
-#     :param user:
-#     :param status_check:
-#     :return:
-#     """
-#     async with UserEntryManager(user) as _user:
-#         if _user.is_registered:
-#             user_entry = await _user.get_entry()
-#             return status_check(user_entry.status)
-#     return False
+async def is_user_registered_with_status(user: User, status_check: ComparableStatus) -> bool:
+    """
+
+    :param user:
+    :param status_check:
+    :return:
+    """
+    async with UserEntryManager(user) as _user:
+        if _user.is_registered:
+            user_entry = await _user.get_entry()
+            return status_check(user_entry.status)
+    return False

@@ -6,7 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from common.bot.emailstatus import EmailStatus, timeout, undelivered, valid_reply, no_response
-from extensions.user import UserEntry
+from common.data.user import UserEntry
 from common.data.settings import google_cfg, discord_cfg as dcfg
 
 

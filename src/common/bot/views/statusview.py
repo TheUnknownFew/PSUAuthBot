@@ -1,4 +1,4 @@
-from collections import Callable
+from collections.abc import Callable
 from typing import Optional
 
 import discord
@@ -6,7 +6,7 @@ from discord import User, SelectOption, Interaction
 
 from common.bot import userstatus
 from common.exceptions import UserMismatchError
-from extensions.user import UserEntry
+from common.data.user import UserEntry
 from common.data import embeds as emb
 from common.data.settings import discord_cfg as dcfg
 

@@ -1,6 +1,6 @@
 import logging
 
-from common.data.settings import discord_cfg as dcfg
+from common.data.settings import discord_cfg
 
 from discord.ext import commands
 import discord
@@ -11,22 +11,19 @@ import discord
 # ----- Setup:
 
 bot = commands.Bot(
-    command_prefix=dcfg.command_prefix,
-    activity=discord.Game(name=dcfg.activity),
+    command_prefix=discord_cfg.command_prefix,
+    activity=discord.Game(name=discord_cfg.activity),
     help_command=None
 )
-dcfg.finalize(bot)
+discord_cfg.finalize(bot)
+
 
 # ----- Main:
 
-
 def start():
     logging.basicConfig(level=logging.INFO)
-
-    bot.load_extension('extensions.user')
-    bot.load_extension('extensions.commands.admin')
-    bot.load_extension('extensions.commands.verify')
-    bot.run(dcfg.auth_token)
+    bot.load_extension('extensions.loader')
+    bot.run(discord_cfg.auth_token)
 
 
 if __name__ == '__main__':

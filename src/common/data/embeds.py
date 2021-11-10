@@ -5,7 +5,7 @@ from discord import User, Embed, Color
 from discord.ext import commands
 
 from common.bot.userstatus import UserStatus
-from extensions.user import UserEntry
+from common.data.user import UserEntry
 from common.data.settings import discord_cfg as dcfg
 
 ERR_DELAY: Final = 8
